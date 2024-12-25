@@ -63,6 +63,7 @@ def retry_with_exponential_backoff(
                 delay *= exponential_base * (1 + jitter * random.random())
 
                 # Sleep for the delay
+                print(f"Exponential backoff for {delay} seconds")
                 time.sleep(delay)
 
             # Raise exceptions for any errors not specified
