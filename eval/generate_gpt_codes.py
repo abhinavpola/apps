@@ -124,7 +124,7 @@ def generate_prompt(
         _input += "\nOutput your answers to the STDOUT stream, such as by using print statements."  # \n"
     else:
         _input += "\nThe solution is to be provided as the function's return value."  # \n"
-    _input += "\nOUTPUT THE CODE ONLY, NO OTHER TEXT."
+    _input += "\nThe code will be run as is. OUTPUT THE CODE ONLY, NO OTHER TEXT. DO NOT PROVIDE EXAMPLE USAGE."
     _input += "\nANSWER:\n"
 
     if args.peeking > 0.0:

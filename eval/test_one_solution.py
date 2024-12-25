@@ -10,6 +10,8 @@ import pprint
 import multiprocessing
 import time
 import testing_util as test_util
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 # for timing debugging
 from datetime import datetime, date
@@ -221,73 +223,74 @@ def eval_and_save_problems(args):
             "codeparrot/apps", split=f"{args.split}[{start}:{args.stop_early}]"
         )
 
-    # main eval loop
-    for index, problem in enumerate(tqdm(problems)):
-        try:
-            if isinstance(codes, dict):
-                output_strings = codes[str(index + args.start)]
-            else:
-                output_strings = codes[index + args.start]
-        except:
-            # print("CANNOT FIND OUTPUT_STR FOR", problem)
-            continue
+    # Create a partial function with fixed arguments
+    check_correctness_partial = partial(
+        check_correctness,
+        timeout=TIMEOUT,
+        debug=args.debug
+    )
 
-        problem["solutions"] = json.loads(problem["solutions"])
-        problem["input_output"] = json.loads(problem["input_output"])
-        sols = problem["solutions"]
-
-        if not os.path.exists(args.save):
-            os.makedirs(args.save)
-
-        res = []
-        if isinstance(output_strings, str):
-            output_strings = [output_strings]
-        for generation_idx, generation in enumerate(output_strings):
-            if args.debug:
-                print(f"\nTesting solution {generation_idx}, {generation=}")
-            curr_res = [-2]
+    # main eval loop with parallel processing
+    with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
+        for index, problem in enumerate(tqdm(problems)):
             try:
+                if isinstance(codes, dict):
+                    output_strings = codes[str(index + args.start)]
+                else:
+                    output_strings = codes[index + args.start]
+            except:
+                continue
+
+            problem["solutions"] = json.loads(problem["solutions"])
+            problem["input_output"] = json.loads(problem["input_output"])
+
+            if not os.path.exists(args.save):
+                os.makedirs(args.save)
+
+            if isinstance(output_strings, str):
+                output_strings = [output_strings]
+
+            # Submit all generations for this problem to the process pool
+            futures = []
+            for generation in output_strings:
+                if args.debug:
+                    print(f"\nSubmitting solution: {generation}")
                 # Clean the generation before testing
                 cleaned_generation = clean_generation(generation)
-                curr_res = check_correctness(
-                    problem,
-                    generation=cleaned_generation,
-                    timeout=TIMEOUT,
-                    debug=args.debug,
+                future = executor.submit(
+                    check_correctness_partial,
+                    problem=problem,
+                    generation=cleaned_generation
                 )
-                fixed = []
-                for e in curr_res:
-                    if isinstance(e, np.ndarray):
-                        e = e.item(0)
-                    if isinstance(e, np.bool_):
-                        e = bool(e)
-                    fixed.append(e)
-                curr_res = fixed
-                if not np.all(curr_res):
-                    print(f"Results were not all True: {curr_res}")
-            except Exception as e:
-                print(f"test framework exception = {repr(e)}{e}\n")
-                break
-            finally:
-                assert isinstance(curr_res, list)
-                res.append(curr_res)
+                futures.append(future)
 
-        if args.debug:
-            print(
-                f"\nHow to read results [-2] = compile error, [-1] = runtime error, [False] = failed test case, [True] = passed test case"
-            )
-            # print(f"results = {res}")
+            # Collect results
+            res = []
+            for future in futures:
+                try:
+                    curr_res = future.result()
+                    fixed = []
+                    for e in curr_res:
+                        if isinstance(e, np.ndarray):
+                            e = e.item(0)
+                        if isinstance(e, np.bool_):
+                            e = bool(e)
+                        fixed.append(e)
+                    res.append(fixed)
+                except Exception as e:
+                    print(f"test framework exception = {repr(e)}{e}\n")
+                    res.append([-2])  # Append compile error result
 
-        results[index + args.start + args.index] = res
+            results[index + args.start + args.index] = res
 
-        with open(results_loc, "w") as f:
-            try:
-                f.write(json.dumps(results))
-            except Exception as e:
-                import pdb
+            with open(results_loc, "w") as f:
+                try:
+                    f.write(json.dumps(results))
+                except Exception as e:
+                    import pdb
 
-                pdb.set_trace()
-                print("didn't save problem due to {e}")
+                    pdb.set_trace()
+                    print("didn't save problem due to {e}")
 
     return results
 
@@ -367,6 +370,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--split", type=str, default="test", help="What split to use.")
     parser.add_argument("--stop-early", default=None, type=int)
+    parser.add_argument(
+        "--max_workers",
+        type=int,
+        default=None,
+        help="Maximum number of worker processes for parallel evaluation"
+    )
 
     args = parser.parse_args()
 
