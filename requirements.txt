@@ -10,3 +10,5 @@ psutil # we used 5.7.0
 # Used during training
 deepspeed>=0.4.0
 tensorboardX>=2.2
+datasets
+openai
